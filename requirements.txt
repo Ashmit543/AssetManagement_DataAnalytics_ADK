@@ -1,0 +1,25 @@
+# Core Google Cloud Client Libraries
+google-cloud-bigquery
+google-cloud-pubsub
+google-cloud-storage
+google-cloud-aiplatform # For Vertex AI (Gemini LLM, Embeddings, Vector Search)
+
+# Financial Data Source
+yfinance
+
+# Data Manipulation & Numerical Operations
+pandas
+numpy
+
+# Web Framework for Dashboard Agent (Choose one - Streamlit is good for prototyping)
+streamlit
+
+# For Anomaly Detection (Statistical/ML methods)
+scikit-learn
+
+# For managing environment variables (local development)
+python-dotenv
+
+# For LLM Orchestration and Agent Workflow (as confirmed in your requirements)
+langchain
+langgraph

@@ -1,0 +1,30 @@
+# Python
+*.pyc
+__pycache__/
+.Python/
+venv/
+env/
+pip-wheel-metadata/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.venv/
+.project/
+
+# Environment variables
+.env
+.flaskenv
+
+# Editor files
+.vscode/
+.idea/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Logs
+*.log
+logs/
+
+# Cloud specific
+*.gcloudignore
