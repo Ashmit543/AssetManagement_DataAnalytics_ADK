@@ -28,3 +28,6 @@ logs/
 
 # Cloud specific
 *.gcloudignore
+
+# Ignore Google Cloud service account key files
+keys/
