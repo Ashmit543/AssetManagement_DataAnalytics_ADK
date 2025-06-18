@@ -1,0 +1,3 @@
+# Specific dependencies for Financial Metrics Agent
+# It relies heavily on yfinance, which should be in the main requirements.txt
+-r ../../requirements.txt

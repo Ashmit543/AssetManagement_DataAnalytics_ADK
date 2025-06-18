@@ -1,11 +1,12 @@
 [
-    {"name": "report_id", "type": "STRING", "mode": "REQUIRED", "description": "Unique ID for the generated report"},
-    {"name": "report_type", "type": "STRING", "mode": "REQUIRED", "description": "Type of report (e.g., Executive Summary, Sector Analysis)"},
-    {"name": "company_ticker", "type": "STRING", "description": "Stock ticker if the report is company-specific"},
+    {"name": "report_id", "type": "STRING", "mode": "REQUIRED", "description": "Unique ID for the generated report (UUID)"},
+    {"name": "report_type", "type": "STRING", "mode": "REQUIRED", "description": "Type of report (e.g., 'Executive Summary', 'Sector Analysis', 'Investment Thesis')"},
+    {"name": "company_ticker", "type": "STRING", "description": "Stock ticker if the report is company-specific (NULL for sector/market reports)"},
     {"name": "generation_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Timestamp when the report was generated"},
-    {"name": "gcs_uri", "type": "STRING", "mode": "REQUIRED", "description": "Cloud Storage URI where the full report text is stored"},
-    {"name": "llm_model_used", "type": "STRING", "description": "Vertex AI LLM model used for generation"},
-    {"name": "parameters_used", "type": "STRING", "description": "JSON string of key parameters/inputs for report generation"},
-    {"name": "status", "type": "STRING", "description": "Status of report generation (e.g., COMPLETED, FAILED)"},
-    {"name": "embedding_id", "type": "STRING", "description": "Reference ID to the embedding of the report summary in Vector Search"}
+    {"name": "gcs_uri", "type": "STRING", "mode": "REQUIRED", "description": "Cloud Storage URI where the full report text is stored (e.g., gs://your-bucket/reports/report_id.txt)"},
+    {"name": "llm_model_used", "type": "STRING", "description": "Vertex AI LLM model used for report generation (e.g., 'gemini-1.5-flash')"},
+    {"name": "parameters_used", "type": "STRING", "description": "JSON string of key parameters/inputs for report generation (e.g., {'start_date': '2023-01-01'})"},
+    {"name": "status", "type": "STRING", "description": "Status of report generation (e.g., 'COMPLETED', 'FAILED', 'IN_PROGRESS')"},
+    {"name": "embedding_id", "type": "STRING", "description": "Reference ID to the embedding of the report's executive summary in Vector Search (UUID)"},
+    {"name": "ingestion_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Timestamp when the record was ingested"}
 ]

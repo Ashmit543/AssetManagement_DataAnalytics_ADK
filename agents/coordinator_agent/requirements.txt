@@ -1,0 +1,4 @@
+# Specific dependencies for Coordinator Agent
+# Often, agents will simply use the main requirements.txt for simplicity in a monorepo.
+# If this agent had unique, heavy dependencies, they would go here.
+-r ../../requirements.txt

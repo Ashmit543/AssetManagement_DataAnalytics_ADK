@@ -1,12 +1,12 @@
 [
     {"name": "company_ticker", "type": "STRING", "mode": "REQUIRED", "description": "Stock ticker of the company"},
-    {"name": "date", "type": "DATE", "mode": "REQUIRED", "description": "Date of sentiment analysis"},
-    {"name": "overall_sentiment_score", "type": "FLOAT", "description": "Aggregated sentiment score"},
-    {"name": "sentiment_magnitude", "type": "FLOAT", "description": "Strength/intensity of the sentiment"},
-    {"name": "source", "type": "STRING", "description": "Source of the news/text (e.g., Alpha Vantage, RSS Feed)"},
+    {"name": "date", "type": "DATE", "mode": "REQUIRED", "description": "Date of sentiment analysis (from news/article)"},
+    {"name": "overall_sentiment_score", "type": "FLOAT", "description": "Aggregated sentiment score (e.g., -1.0 to 1.0)"},
+    {"name": "sentiment_magnitude", "type": "FLOAT", "description": "Strength/intensity of the sentiment (e.g., 0.0 to 1.0)"},
+    {"name": "source", "type": "STRING", "description": "Source of the news/text (e.g., 'Alpha Vantage News', 'Custom RSS Feed')"},
     {"name": "article_title", "type": "STRING", "description": "Title of the article/source text"},
     {"name": "article_url", "type": "STRING", "description": "URL of the article"},
-    {"name": "topics", "type": "STRING", "mode": "REPEATED", "description": "List of key topics mentioned"},
-    {"name": "text_embedding_id", "type": "STRING", "description": "Reference ID to the embedding in Vertex AI Vector Search"},
+    {"name": "topics", "type": "STRING", "mode": "REPEATED", "description": "List of key topics mentioned in the source text"},
+    {"name": "text_embedding_id", "type": "STRING", "description": "Reference ID to the embedding in Vertex AI Vector Search (UUID)"},
     {"name": "ingestion_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Timestamp when the record was ingested"}
 ]
