@@ -1,25 +1,27 @@
-# Core Google Cloud Client Libraries
-google-cloud-bigquery
-google-cloud-pubsub
-google-cloud-storage
-google-cloud-aiplatform # For Vertex AI (Gemini LLM, Embeddings, Vector Search)
-google-cloud-secret-manager
-# Financial Data Source
-yfinance
+# General dependencies
+Flask==2.3.4
+gunicorn==21.2.0
+requests==2.31.0
+python-dotenv==1.0.1
+PyYAML==6.0.1
 
-# Data Manipulation & Numerical Operations
-pandas
-numpy
+# Google Cloud Client Libraries
+google-cloud-bigquery==3.22.0
+google-cloud-storage==2.16.0
+google-cloud-aiplatform==1.49.0 # For Vertex AI (Gemini, Embeddings, Vector Search)
+google-cloud-pubsub==2.21.0
+google-cloud-secret-manager==2.18.0
 
-# Web Framework for Dashboard Agent (Choose one - Streamlit is good for prototyping)
-streamlit
+# Google AI SDK (for Gemini models)
+google-generativeai==0.6.0
 
-# For Anomaly Detection (Statistical/ML methods)
-scikit-learn
+# Data source specific
+yfinance==0.2.38 # For Financial Metrics Agent
 
-# For managing environment variables (local development)
-python-dotenv
+# UI/Dashboard specific
+streamlit==1.35.0
 
-# For LLM Orchestration and Agent Workflow (as confirmed in your requirements)
-langchain
-langgraph
+# Optional: For better debugging/logging
+# opencensus-pep8-compliance
+# black
+# pylint

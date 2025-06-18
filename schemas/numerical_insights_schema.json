@@ -1,0 +1,9 @@
+[
+    {"name": "ticker", "type": "STRING", "mode": "REQUIRED", "description": "Stock ticker of the company"},
+    {"name": "insight_type", "type": "STRING", "mode": "REQUIRED", "description": "Type of numerical insight (e.g., Earnings Summary, Financial Health)"},
+    {"name": "generation_date", "type": "DATE", "mode": "REQUIRED", "description": "Date when the insight was generated"},
+    {"name": "summary_text", "type": "STRING", "mode": "REQUIRED", "description": "Generated natural language summary from numerical data"},
+    {"name": "embedding_id", "type": "STRING", "description": "Reference ID to the embedding in Vertex AI Vector Search"},
+    {"name": "source_metrics", "type": "STRING", "mode": "REPEATED", "description": "List of financial metrics used for this insight"},
+    {"name": "ingestion_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Timestamp when the record was ingested"}
+]

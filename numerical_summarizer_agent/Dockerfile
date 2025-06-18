@@ -1,20 +1,22 @@
-# STEP 1: Choose a base image
-FROM python:3.10-slim-buster
+# Use the official Python image as a base image
+FROM python:3.9-slim-buster
 
-# STEP 2: Set environment variables
-ENV PYTHONUNBUFFERED True
-
-# STEP 3: Create a working directory inside the container
+# Set the working directory in the container
 WORKDIR /app
 
-# STEP 4: Copy dependency file
-COPY requirements.txt .
+# Copy the common directory and its contents
+# This makes common/constants.py available inside the container
+COPY ../common/ ./common/
 
-# STEP 5: Install Python dependencies
-RUN pip install -r requirements.txt
+# Copy the root-level requirements.txt file
+COPY ../requirements.txt .
 
-# STEP 6: Copy your application code
-COPY main.py .
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# STEP 7: Define the command to run when the container starts
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 main:app
+# Copy the agent's main application file
+COPY gemini_llm_agent/main.py .
+
+# Command to run the application using Gunicorn
+# Ensure gunicorn is in your requirements.txt
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]

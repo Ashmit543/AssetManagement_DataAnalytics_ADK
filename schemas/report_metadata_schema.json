@@ -1,0 +1,11 @@
+[
+    {"name": "report_id", "type": "STRING", "mode": "REQUIRED", "description": "Unique ID for the generated report"},
+    {"name": "report_type", "type": "STRING", "mode": "REQUIRED", "description": "Type of report (e.g., Executive Summary, Sector Analysis)"},
+    {"name": "company_ticker", "type": "STRING", "description": "Stock ticker if the report is company-specific"},
+    {"name": "generation_timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Timestamp when the report was generated"},
+    {"name": "gcs_uri", "type": "STRING", "mode": "REQUIRED", "description": "Cloud Storage URI where the full report text is stored"},
+    {"name": "llm_model_used", "type": "STRING", "description": "Vertex AI LLM model used for generation"},
+    {"name": "parameters_used", "type": "STRING", "description": "JSON string of key parameters/inputs for report generation"},
+    {"name": "status", "type": "STRING", "description": "Status of report generation (e.g., COMPLETED, FAILED)"},
+    {"name": "embedding_id", "type": "STRING", "description": "Reference ID to the embedding of the report summary in Vector Search"}
+]

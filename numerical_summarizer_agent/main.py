@@ -1,12 +1,8 @@
 import os
 from google.cloud import bigquery, pubsub_v1
-# We still keep aiplatform imported because you have `aiplatform.init`
-# and it might be used for other Vertex AI functionalities later,
-# even if not directly for model loading in this specific way.
 import google.cloud.aiplatform as aiplatform
 from datetime import datetime, date
 from flask import Flask, request, jsonify
-import google.generativeai as genai # This is what you should use for text-embedding-004
 import json
 import base64
 
@@ -24,8 +20,8 @@ INSIGHTS_GENERATED_TOPIC = 'insights-generated-topic'  # Output topic
 
 # Vertex AI Model Configuration
 REGION = 'asia-south1'  # Your Vertex AI region (Mumbai)
-GENERATIVE_MODEL_NAME = 'gemini-2.0-flash-lite'  # Or 'gemini-1.0-pro-001' etc.
-EMBEDDING_MODEL_NAME = 'text-embedding-004'  # THIS IS A GEMINI EMBEDDING MODEL
+GENERATIVE_MODEL_NAME = 'gemini-1.5-flash-001'  # Using stable model name
+EMBEDDING_MODEL_NAME = 'text-embedding-004'  # Vertex AI embedding model
 # IMPORTANT: Replace with your actual endpoint ID from the Cloud Console
 VECTOR_SEARCH_INDEX_ENDPOINT_ID = '8168368639771148288'
 
@@ -33,17 +29,30 @@ VECTOR_SEARCH_INDEX_ENDPOINT_ID = '8168368639771148288'
 bigquery_client = bigquery.Client(project=PROJECT_ID)
 pubsub_publisher = pubsub_v1.PublisherClient()
 
-# Initialize Vertex AI - Keep this if you need other Vertex AI features,
-# but it's not strictly required for `genai.GenerativeModel` or `genai.embed_content`
-# as they handle auth via ADC when on GCP.
+# Initialize Vertex AI
 aiplatform.init(project=PROJECT_ID, location=REGION)
 
-# Generative Model from google.generativeai (already corrected)
-generative_model = genai.GenerativeModel(GENERATIVE_MODEL_NAME)
+# Initialize models as None - will be loaded when needed
+generative_model = None
+embedding_model = None
 
-# REMOVE THIS LINE:
-# embedding_model = aiplatform.get_embedding_model(EMBEDDING_MODEL_NAME)
-# Instead, we will use `genai.embed_content` directly in the function.
+
+def get_generative_model():
+    """Lazy load the generative model."""
+    global generative_model
+    if generative_model is None:
+        from vertexai.generative_models import GenerativeModel
+        generative_model = GenerativeModel(GENERATIVE_MODEL_NAME)
+    return generative_model
+
+
+def get_embedding_model():
+    """Lazy load the embedding model."""
+    global embedding_model
+    if embedding_model is None:
+        from vertexai.language_models import TextEmbeddingModel
+        embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
+    return embedding_model
 
 
 # --- Helper Functions ---
@@ -101,65 +110,40 @@ def format_numerical_data_for_llm(numerical_data, ticker):
 
 
 def generate_summary_with_gemini(formatted_data):
-    """Generates a summary using the Gemini generative model."""
-    print("Generating summary with Gemini...")
+    """Generates a summary using the Vertex AI Gemini generative model."""
+    print("Generating summary with Vertex AI Gemini...")
     try:
-        response = generative_model.generate_content(formatted_data)
+        model = get_generative_model()
+        response = model.generate_content(formatted_data)
         summary_text = response.text
-        print("Summary generated.")
+        print("Summary generated successfully.")
         return summary_text
     except Exception as e:
-        print(f"Error generating summary with Gemini: {e}")
+        print(f"Error generating summary with Vertex AI Gemini: {e}")
         return None
 
 
 def generate_embedding(text):
-    """Generates a vector embedding for a given text using google.generativeai."""
-    print("Generating embedding...")
+    """Generates a vector embedding for a given text using Vertex AI."""
+    print("Generating embedding with Vertex AI...")
     try:
-        # Use genai.embed_content for 'text-embedding-004' (Gemini embedding model)
-        response = genai.embed_content(model=EMBEDDING_MODEL_NAME, content=text)
-        embeddings = response['embedding'] # Access the embedding from the response
-        print("Embedding generated.")
-        return embeddings
+        model = get_embedding_model()
+        # Use Vertex AI TextEmbeddingModel
+        embeddings = model.get_embeddings([text])
+        # Extract the embedding vector from the first (and only) result
+        embedding_vector = embeddings[0].values
+        print("Embedding generated successfully.")
+        return embedding_vector
     except Exception as e:
-        print(f"Error generating embedding: {e}")
+        print(f"Error generating embedding with Vertex AI: {e}")
         return None
 
 
 def store_insight_in_vector_search(ticker, summary, embedding):
     """Stores the generated insight and its embedding in Vertex AI Vector Search."""
     print(f"Storing insight for {ticker} in Vector Search (placeholder for now)...")
-
-    # This is a placeholder for the actual upsert operation.
-    # For a real implementation, you would use Vertex AI SDK to upsert datapoints
-    # into your deployed Vector Search index.
-    # Example (conceptual, requires more setup):
-    # from google.cloud import aiplatform_v1beta1
-    # client_options = {"api_endpoint": f"{REGION}-aiplatform.googleapis.com"}
-    # index_endpoint_client = aiplatform_v1beta1.IndexEndpointServiceClient(client_options=client_options)
-    # deployed_index_resource_name = f"projects/{PROJECT_ID}/locations/{REGION}/indexEndpoints/{VECTOR_SEARCH_INDEX_ENDPOINT_ID}/deployedIndexes/your_deployed_index_id_from_endpoint_details"
-    #
-    # data_points = [
-    #     aiplatform_v1beta1.IndexDatapoint(
-    #         datapoint_id=f"{ticker}_{datetime.now().isoformat()}",
-    #         feature_vector=embedding,
-    #         restricts=[aiplatform_v1beta1.IndexDatapoint.Restriction(namespace="ticker", allow_list=[ticker])],
-    #         metadata={"summary": summary, "timestamp": datetime.now().isoformat()}
-    #     )
-    # ]
-    #
-    # try:
-    #     index_endpoint_client.upsert_datapoints(
-    #         index_endpoint=deployed_index_resource_name,
-    #         datapoints=data_points
-    #     )
-    #     print(f"Successfully stored insight for {ticker} in Vector Search.")
-    #     return True
-    # except Exception as e:
-    #     print(f"Error storing insight in Vector Search: {e}")
-    #     return False
-    return True  # Always return True for now due to placeholder implementation
+    # Placeholder implementation
+    return True
 
 
 def publish_pubsub_message(topic_name, message_data, attributes=None):
@@ -186,49 +170,51 @@ def index():
     Cloud Run services receive HTTP requests. When a Pub/Sub push subscription
     triggers this service, the Pub/Sub message data is included in the HTTP POST body.
     """
-    envelope = request.get_json()
-    if not envelope:
-        return 'No Pub/Sub message received', 400
-
-    if not isinstance(envelope, dict) or 'message' not in envelope:
-        return 'Invalid Pub/Sub message format', 400
-
-    pubsub_message = envelope['message']
-
-    ticker = None
-    if 'data' in pubsub_message:
-        try:
-            message_data_str = base64.b64decode(pubsub_message['data']).decode('utf-8')
-            message_data = json.loads(message_data_str)
-            ticker = message_data.get('ticker')
-        except Exception as e:
-            print(f"Error decoding Pub/Sub message data: {e}")
-            return 'Error decoding message', 500
-
-    if not ticker:
-        return 'No ticker provided in Pub/Sub message', 400
-
-    print(f"Received request for ticker: {ticker}")
     try:
+        envelope = request.get_json()
+        if not envelope:
+            print("No Pub/Sub message received")
+            return 'No Pub/Sub message received', 400
+
+        if not isinstance(envelope, dict) or 'message' not in envelope:
+            print("Invalid Pub/Sub message format")
+            return 'Invalid Pub/Sub message format', 400
+
+        pubsub_message = envelope['message']
+
+        ticker = None
+        if 'data' in pubsub_message:
+            try:
+                message_data_str = base64.b64decode(pubsub_message['data']).decode('utf-8')
+                message_data = json.loads(message_data_str)
+                ticker = message_data.get('ticker')
+            except Exception as e:
+                print(f"Error decoding Pub/Sub message data: {e}")
+                return 'Error decoding message', 500
+
+        if not ticker:
+            print("No ticker provided in Pub/Sub message")
+            return 'No ticker provided in Pub/Sub message', 400
+
+        print(f"Received request for ticker: {ticker}")
+
         # 1. Fetch numerical data from BigQuery
         numerical_data = fetch_numerical_data_from_bq(ticker)
 
         # 2. Format data for LLM
         formatted_data = format_numerical_data_for_llm(numerical_data, ticker)
 
-        # 3. Generate summary using Gemini
+        # 3. Generate summary using Vertex AI Gemini
         summary = generate_summary_with_gemini(formatted_data)
         if not summary:
             return jsonify({'status': 'error', 'message': f'Failed to generate summary for {ticker}.'}), 500
 
-        # 4. Generate embedding for the summary
-        embedding = generate_embedding(summary) # This now uses genai.embed_content
+        # 4. Generate embedding for the summary using Vertex AI
+        embedding = generate_embedding(summary)
         if not embedding:
             return jsonify({'status': 'error', 'message': f'Failed to generate embedding for {ticker}.'}), 500
 
         # 5. Store insight (summary + embedding) in Vertex AI Vector Search
-        # NOTE: The store_insight_in_vector_search function in this example is a placeholder.
-        # It currently just logs the intention. You will need to implement the actual upsert logic later.
         vector_search_success = store_insight_in_vector_search(ticker, summary, embedding)
 
         if vector_search_success:
@@ -247,7 +233,15 @@ def index():
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint."""
+    return jsonify({'status': 'healthy'}), 200
 
 
 if __name__ == '__main__':
