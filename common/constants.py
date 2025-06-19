@@ -18,8 +18,14 @@ BIGQUERY_TABLE_REPORT_METADATA = "report_metadata"
 PUBSUB_TOPIC_COORDINATOR_REQUESTS = "coordinator-requests-topic"
 PUBSUB_TOPIC_FINANCIAL_DATA_REQUESTS = "financial-data-requests-topic"
 PUBSUB_TOPIC_FINANCIAL_DATA_AVAILABLE = "financial-data-available-topic"
-PUBSUB_TOPIC_NUMERICAL_SUMMARIES_REQUESTS = "numerical-summaries-requests-topic"
-PUBSUB_TOPIC_NUMERICAL_SUMMARIES_AVAILABLE = "numerical-summaries-available-topic"
+
+# ADDED/MODIFIED TOPICS FOR NUMERICAL SUMMARIZER AGENT
+PUBSUB_TOPIC_FINANCIAL_METRICS_PROCESSED = "financial-metrics-processed-topic" # New: Trigger for NumericalSummarizer
+PUBSUB_TOPIC_NUMERICAL_INSIGHTS_PROCESSED = "numerical-insights-processed-topic" # Renamed/New: Output of NumericalSummarizer
+
+PUBSUB_TOPIC_NUMERICAL_SUMMARIES_REQUESTS = "numerical-summaries-requests-topic" # Keep if external requests to numerical summarizer
+# PUBSUB_TOPIC_NUMERICAL_SUMMARIES_AVAILABLE = "numerical-summaries-available-topic" # Removed/Replaced by PUBSUB_TOPIC_NUMERICAL_INSIGHTS_PROCESSED
+
 PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS = "report-generation-requests-topic"
 PUBSUB_TOPIC_REPORT_GENERATION_COMPLETED = "report-generation-completed-topic"
 PUBSUB_TOPIC_DASHBOARD_UPDATES = "dashboard-updates-topic"
