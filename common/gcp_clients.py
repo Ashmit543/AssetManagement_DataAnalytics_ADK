@@ -1,5 +1,7 @@
+# common/gcp_clients.py
+
 from google.cloud import bigquery, storage, aiplatform, pubsub_v1, secretmanager_v1beta1
-import google.generativeai as genai
+# Removed import google.generativeai as genai
 from common.constants import PROJECT_ID, REGION
 
 # Initialize BigQuery Client
@@ -10,11 +12,14 @@ def get_bigquery_client():
 def get_storage_client():
     return storage.Client(project=PROJECT_ID)
 
-# Initialize Vertex AI (AI Platform) Client for LLMs and Embeddings
-def get_vertex_ai_client():
-    # aiplatform.init needs to be called once per process if you're using it this way
+# Initialize Vertex AI (AI Platform) Client (renamed from get_vertex_ai_client)
+def get_aiplatform_client(): # Renamed this function
+    # aiplatform.init needs to be called once per process.
+    # It's usually better to call aiplatform.init directly in the tool/agent that uses it,
+    # or ensure it's called globally once, to avoid re-initialization issues.
+    # For now, we'll keep the init call here, but be aware.
     aiplatform.init(project=PROJECT_ID, location=REGION)
-    return aiplatform # Return the module itself, as models are accessed via aiplatform.preview.generative_models.GenerativeModel etc.
+    return aiplatform # Return the module itself for accessing sub-modules like .generative_models
 
 # Initialize Pub/Sub Publisher Client
 def get_pubsub_publisher_client():
@@ -28,13 +33,4 @@ def get_pubsub_subscriber_client():
 def get_secret_manager_client():
     return secretmanager_v1beta1.SecretManagerServiceClient()
 
-# Initialize Google Generative AI Client (for Gemini)
-def get_generative_model(model_name: str):
-    """
-    Initializes and returns a generative model from Google AI.
-    Make sure genai.configure is called with your API key if not using default credentials.
-    For production on GCP, prefer default application credentials.
-    """
-    # For local development, you might set genai.configure(api_key="YOUR_API_KEY")
-    # For Cloud Run, default credentials will be used, so direct model loading is fine.
-    return genai.GenerativeModel(model_name)
+# Removed get_generative_model function

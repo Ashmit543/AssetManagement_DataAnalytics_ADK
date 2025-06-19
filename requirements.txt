@@ -15,12 +15,12 @@ google-cloud-secret-manager==2.18.0
 # Google AI SDK (for Gemini models)
 google-generativeai==0.6.0
 
-# Data source specific
-yfinance==0.2.38 # For Financial Metrics Agent
-
 # UI/Dashboard specific
 streamlit==1.35.0
-
+requests
+numpy
+alpha_vantage
+pandas
 # Optional: For better debugging/logging
 # opencensus-pep8-compliance
 # black

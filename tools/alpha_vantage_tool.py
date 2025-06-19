@@ -1,9 +1,14 @@
+# tools/alpha_vantage_tool.py
 import os
 import requests
 import json
+import pandas as pd
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from common.gcp_clients import get_secret_manager_client
 from common.constants import PROJECT_ID, SECRET_ALPHA_VANTAGE_API_KEY
+from common.utils import get_current_ist_timestamp
+
 
 class AlphaVantageTool:
     """
@@ -21,7 +26,7 @@ class AlphaVantageTool:
         Loads the Alpha Vantage API key from Google Secret Manager.
         For local development, fall back to environment variable for convenience.
         """
-        if os.getenv("ALPHA_VANTAGE_API_KEY"): # For local testing via .env
+        if os.getenv("ALPHA_VANTAGE_API_KEY"):  # For local testing via .env
             self._api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
             print("Alpha Vantage API key loaded from environment variable.")
             return
@@ -35,7 +40,7 @@ class AlphaVantageTool:
         except Exception as e:
             print(f"Error loading Alpha Vantage API key from Secret Manager: {e}")
             print("Please ensure the secret exists and the service account has 'Secret Manager Secret Accessor' role.")
-            self._api_key = None # Ensure it's None if loading fails
+            self._api_key = None  # Ensure it's None if loading fails
 
     def _make_request(self, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -48,25 +53,74 @@ class AlphaVantageTool:
         params["apikey"] = self._api_key
         try:
             response = requests.get(self.BASE_URL, params=params)
-            response.raise_for_status() # Raise an exception for HTTP errors
+            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
             data = response.json()
+
             if "Error Message" in data:
                 print(f"Alpha Vantage API error: {data['Error Message']}")
                 return None
             if "Note" in data:
-                print(f"Alpha Vantage API note: {data['Note']}") # Rate limit message
+                print(f"Alpha Vantage API note: {data['Note']}")
+                # If a Note about rate limits appears, it's a good sign of hitting limits
+                if "5 calls per minute" in data['Note'] or "500 calls per day" in data['Note']:
+                    print(f"RATE LIMIT HIT: {data['Note']}")
+                    # You might want to raise an exception here or implement a retry mechanism
+                    return None  # Return None as data might not be complete due to rate limit
             return data
         except requests.exceptions.RequestException as e:
             print(f"Network error or invalid request to Alpha Vantage API: {e}")
+            # IMPORTANT: Capture and print the raw response text if an HTTP error occurred
+            if 'response' in locals() and hasattr(response, 'text'):
+                print(f"Raw response text (HTTP Error): {response.text}")
+            else:
+                print("No raw response text available for Network error.")
             return None
         except json.JSONDecodeError as e:
-            print(f"Error decoding JSON response from Alpha Vantage: {e}. Response text: {response.text}")
+            print(f"Error decoding JSON response from Alpha Vantage: {e}.")
+            # IMPORTANT: Print the full raw response text if JSON decoding fails
+            if 'response' in locals() and hasattr(response, 'text'):
+                print(f"Full raw response text (JSON Decode Error): {response.text}")
+            else:
+                print("No raw response text available for JSON Decode error.")
             return None
 
     def get_company_overview(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetches company overview and fundamental data."""
         params = {"function": "OVERVIEW", "symbol": symbol}
         return self._make_request(params)
+
+    def get_daily_time_series(self, symbol: str, outputsize: str = "compact") -> Optional[pd.DataFrame]:
+        """
+        Fetches daily time series data (OHLCV).
+        Args:
+            symbol: Stock ticker symbol (e.g., 'IBM').
+            outputsize: 'compact' returns the latest 100 data points, 'full' returns full history.
+        Returns:
+            A pandas DataFrame with historical data or None if an error occurs.
+        """
+        params = {"function": "TIME_SERIES_DAILY", "symbol": symbol, "outputsize": outputsize}
+        data = self._make_request(params)
+        if data and "Time Series (Daily)" in data:
+            df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient="index")
+            df = df.rename(columns={
+                "1. open": "open",
+                "2. high": "high",
+                "3. low": "low",
+                "4. close": "close",
+                "5. volume": "volume"
+            })
+            df.index = pd.to_datetime(df.index).date  # Convert index to date objects
+            df = df.astype({'open': float, 'high': float, 'low': float, 'close': float, 'volume': int})
+            df.sort_index(inplace=True)  # Ensure chronological order
+            df.reset_index(inplace=True)
+            df.rename(columns={'index': 'date'}, inplace=True)
+            return df[['date', 'open', 'high', 'low', 'close', 'volume']]
+
+        # Added explicit print if "Time Series (Daily)" key is missing
+        if data is not None:  # If data was received but lacked the key
+            print(
+                f"Alpha Vantage API response for TIME_SERIES_DAILY did not contain 'Time Series (Daily)' key for {symbol}. Full response keys: {data.keys()}")
+        return None
 
     def get_income_statement(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetches income statement data."""
@@ -89,7 +143,7 @@ class AlphaVantageTool:
         return self._make_request(params)
 
     def get_news_sentiment(self, tickers: Optional[List[str]] = None, topics: Optional[List[str]] = None,
-                          sort_by: str = "relevance", limit: int = 50) -> Optional[Dict[str, Any]]:
+                           sort_by: str = "relevance", limit: int = 50) -> Optional[Dict[str, Any]]:
         """
         Fetches news and sentiment data.
         Args:
@@ -125,8 +179,98 @@ class AlphaVantageTool:
         }
         return self._make_request(params)
 
-    # You can add more Alpha Vantage API wrappers as needed for other functionalities,
-    # e.g., get_treasury_yield, get_cpi, get_unemployment_rate for macro data.
+    # Simplified method to get key metrics similar to yfinance_tool
+    def get_key_metrics(self, symbol: str) -> Dict[str, Any]:
+        """
+        Fetches key financial metrics using Alpha Vantage overview and daily data,
+        and transforms them into the BigQuery schema format.
+        """
+        metrics = {
+            "ticker": symbol,
+            "date": datetime.now().date().isoformat(),  # Use current date for "snapshot" metrics
+            "ingestion_timestamp": get_current_ist_timestamp()
+        }
+
+        # Fetch Company Overview for fundamental data
+        overview = self.get_company_overview(symbol)
+        if overview:
+            # Map Alpha Vantage overview fields to your BigQuery schema
+            metrics["market_cap"] = int(overview.get("MarketCapitalization", 0)) if overview.get(
+                "MarketCapitalization") else None
+            metrics["pe_ratio"] = float(overview.get("PERatio", 0)) if overview.get("PERatio") and overview.get(
+                "PERatio") != "None" else None
+            metrics["eps"] = float(overview.get("EPS", 0)) if overview.get("EPS") and overview.get(
+                "EPS") != "None" else None
+            metrics["roe"] = float(overview.get("ReturnOnEquityTTM", 0)) if overview.get(
+                "ReturnOnEquityTTM") and overview.get("ReturnOnEquityTTM") != "None" else None
+            metrics["debt_to_equity"] = float(overview.get("DebtToEquityRatio", 0)) if overview.get(
+                "DebtToEquityRatio") and overview.get("DebtToEquityRatio") != "None" else None
+            # Revenue and Net Income - Alpha Vantage overview has 'RevenueTTM', 'NetIncomeTTM'
+            metrics["revenue"] = int(overview.get("RevenueTTM", 0)) if overview.get("RevenueTTM") else None
+            metrics["net_income"] = int(overview.get("NetIncomeTTM", 0)) if overview.get("NetIncomeTTM") else None
+            metrics["beta"] = float(overview.get("Beta", 0)) if overview.get("Beta") and overview.get(
+                "Beta") != "None" else None
+
+            # Geographical exposure would need more parsing from description or other data
+            metrics["geographical_exposure"] = overview.get("Description", "")[
+                                               :500]  # Use part of description as placeholder
+            # Risk signals and sector performance index are custom; might need further LLM analysis or external data.
+
+        # Fetch Daily Time Series for current price, OHLCV, volume, 52-week high/low
+        daily_data = self.get_daily_time_series(symbol, outputsize="compact")
+        if daily_data is not None and not daily_data.empty:
+            latest = daily_data.iloc[-1]
+            metrics["current_price"] = latest.get("close")
+            metrics["open"] = latest.get("open")
+            metrics["high"] = latest.get("high")
+            metrics["low"] = latest.get("low")
+            metrics["close"] = latest.get("close")
+            metrics["volume"] = latest.get("volume")
+
+            # Calculate Day Change Percent
+            if len(daily_data) >= 2:
+                prev_close = daily_data.iloc[-2].get("close")
+                if prev_close and prev_close != 0:
+                    metrics["day_change_percent"] = ((latest["close"] - prev_close) / prev_close) * 100
+
+            # Calculate 52-week high/low from available data (up to 100 days for compact)
+            # For a true 52-week, you'd need 'full' outputsize or a longer history
+            metrics["fifty_two_week_high"] = daily_data['high'].max()
+            metrics["fifty_two_week_low"] = daily_data['low'].min()
+
+            # Calculate Moving Averages (50-day, 200-day) from the time series data
+            if len(daily_data) >= 200:  # Need enough data points
+                metrics["moving_average_50"] = daily_data['close'].rolling(window=50).mean().iloc[-1]
+                metrics["moving_average_200"] = daily_data['close'].rolling(window=200).mean().iloc[-1]
+            elif len(daily_data) >= 50:
+                metrics["moving_average_50"] = daily_data['close'].rolling(window=50).mean().iloc[-1]
+
+            # RSI: Requires a technical indicator call or a separate calculation
+            # For this MVP, we will use the technical indicator API.
+            # Alpha Vantage RSI requires 'interval' and 'time_period'. Using 'daily' and '10' for example.
+            rsi_data = self.get_technical_indicator("RSI", symbol, interval="daily", time_period=14)
+            if rsi_data and f"Technical Analysis: RSI" in rsi_data:
+                latest_date_rsi = sorted(rsi_data[f"Technical Analysis: RSI"].keys())[-1]
+                metrics["rsi"] = float(rsi_data[f"Technical Analysis: RSI"][latest_date_rsi]["RSI"])
+        else:
+            print(f"No daily time series data found for {symbol} to calculate price-derived metrics.")
+
+        # Ensure all fields are present, even if None, to match BigQuery schema
+        for field in [
+            "open", "high", "low", "close", "volume", "market_cap", "pe_ratio", "eps",
+            "revenue", "net_income", "debt_to_equity", "roe", "current_price",
+            "day_change_percent", "fifty_two_week_high", "fifty_two_week_low",
+            "moving_average_50", "moving_average_200", "rsi", "beta", "cagr",
+            "geographical_exposure", "risk_signals", "sector_performance_index"
+        ]:
+            if field not in metrics:
+                metrics[field] = None
+
+        # Override date to current date for snapshot
+        metrics["date"] = datetime.now().date().isoformat()
+
+        return metrics
+
 
 # Example Usage (for testing purposes, not part of the tool itself for deployment)
 if __name__ == "__main__":
@@ -134,24 +278,51 @@ if __name__ == "__main__":
     # or as an environment variable before running this script directly.
     # Otherwise, it will try to fetch from Secret Manager.
     from dotenv import load_dotenv
-    load_dotenv() # Load .env for local testing
+
+    load_dotenv()  # Load .env for local testing
 
     av_tool = AlphaVantageTool()
     if av_tool._api_key:
-        print("\n--- Fetching Company Overview for IBM ---")
-        overview = av_tool.get_company_overview("IBM")
+        sample_symbol = "RELIANCE.NS"  # Using IBM for better reliability
+        print(f"\n--- Fetching Company Overview for {sample_symbol} ---")
+        overview = av_tool.get_company_overview(sample_symbol)
         if overview:
             print(f"Company Name: {overview.get('Name')}")
-            print(f"Description: {overview.get('Description')[:100]}...")
+            print(f"Description: {overview.get('Description', '')[:100]}...")
+            print(f"Market Cap: {overview.get('MarketCapitalization')}")
+            print(f"PE Ratio: {overview.get('PERatio')}")
+        else:
+            print(f"Failed to fetch Company Overview for {sample_symbol}.")
 
-        print("\n--- Fetching Latest News Sentiment for AAPL, MSFT ---")
-        news_sentiment = av_tool.get_news_sentiment(tickers=["AAPL", "MSFT"], limit=5)
+        print(f"\n--- Fetching Daily Time Series for {sample_symbol} (last 100 days) ---")
+        daily_data_df = av_tool.get_daily_time_series(sample_symbol)
+        if daily_data_df is not None:
+            print(daily_data_df.head())
+            print(f"Latest Close: {daily_data_df['close'].iloc[-1]}")
+        else:
+            print(f"No daily data found for {sample_symbol}")
+
+        print(f"\n--- Fetching Latest News Sentiment for IBM, MSFT ---")
+        news_sentiment = av_tool.get_news_sentiment(tickers=["IBM", "MSFT"], limit=2)  # Reduced limit for quick test
         if news_sentiment and "feed" in news_sentiment:
             for article in news_sentiment["feed"]:
                 print(f"Title: {article.get('title')}")
-                print(f"Overall Sentiment: {article.get('overall_sentiment_score')}, Label: {article.get('overall_sentiment_label')}")
+                print(
+                    f"Overall Sentiment: {article.get('overall_sentiment_score')}, Label: {article.get('overall_sentiment_label')}")
                 print("-" * 20)
-        elif news_sentiment:
-            print("No news articles found or unexpected response structure.")
+        elif news_sentiment:  # If news_sentiment is not None but 'feed' isn't there
+            print("No news articles found or unexpected response structure for news sentiment.")
+        else:
+            print("Failed to fetch news sentiment data.")
+
+        print(f"\n--- Fetching Key Metrics for {sample_symbol} (for BigQuery schema) ---")
+        key_metrics = av_tool.get_key_metrics(sample_symbol)
+        if key_metrics:
+            for k, v in key_metrics.items():
+                if v is not None:  # Only print non-None values for brevity
+                    print(f"  {k}: {v}")
+        else:
+            print(f"Failed to fetch key metrics for {sample_symbol}.")
+
     else:
         print("Alpha Vantage API key not configured. Skipping examples.")

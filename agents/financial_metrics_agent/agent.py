@@ -1,18 +1,19 @@
 from common.adk_base import ADKBaseAgent
 from tools.bigquery_tool import BigQueryTool
-from agents.financial_metrics_agent.yfinance_processor import YFinanceProcessor
+# FROM THIS LINE:
+from agents.financial_metrics_agent.alpha_vantage_processor import AlphaVantageProcessor # Changed import
 from common.constants import BIGQUERY_TABLE_FINANCIAL_METRICS, PUBSUB_TOPIC_FINANCIAL_DATA_AVAILABLE, PUBSUB_TOPIC_DASHBOARD_UPDATES
 import json
 
 class FinancialMetricsAgent(ADKBaseAgent):
     """
-    The Financial Metrics Agent fetches financial data using yfinance,
+    The Financial Metrics Agent fetches financial data using Alpha Vantage,
     formats it, and stores it in BigQuery.
     It responds to requests from the Coordinator Agent.
     """
     def __init__(self):
         super().__init__("FinancialMetricsAgent")
-        self.yfinance_processor = YFinanceProcessor()
+        self.av_processor = AlphaVantageProcessor() # Changed processor instance
         self.bigquery_tool = BigQueryTool()
         print("FinancialMetricsAgent initialized.")
 
@@ -42,7 +43,7 @@ class FinancialMetricsAgent(ADKBaseAgent):
         print(f"FinancialMetricsAgent: Processing request for ticker: {ticker}")
 
         try:
-            financial_data = self.yfinance_processor.fetch_and_format_financial_metrics(ticker)
+            financial_data = self.av_processor.fetch_and_format_financial_metrics(ticker) # Changed processor call
 
             if financial_data:
                 # Insert data into BigQuery
@@ -98,3 +99,26 @@ class FinancialMetricsAgent(ADKBaseAgent):
 
 # Entry point for the Cloud Run service
 app = FinancialMetricsAgent().app
+
+# --- Test Block for direct execution ---
+if __name__ == "__main__":
+    print("\n--- Running FinancialMetricsAgent direct test ---")
+    agent_instance = FinancialMetricsAgent()
+
+    # Simulate a message for a valid ticker
+    test_message_valid = {
+        "ticker": "RELIANCE.NS", # Use a ticker you know works, like RELIANCE.BSE
+        "request_id": "test-req-123"
+    }
+    print(f"Simulating request for {test_message_valid['ticker']}...")
+    agent_instance.process_message(test_message_valid)
+
+    print("\n--- Simulating request for a non-existent ticker ---")
+    test_message_invalid = {
+        "ticker": "NONEXISTENT.BSE", # This should trigger an error path
+        "request_id": "test-req-456"
+    }
+    print(f"Simulating request for {test_message_invalid['ticker']}...")
+    agent_instance.process_message(test_message_invalid)
+
+    print("\n--- FinancialMetricsAgent direct test completed ---")

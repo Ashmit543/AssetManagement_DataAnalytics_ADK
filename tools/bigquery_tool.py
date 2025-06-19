@@ -2,7 +2,7 @@ from google.cloud import bigquery
 from typing import List, Dict, Any, Optional
 from common.gcp_clients import get_bigquery_client
 from common.constants import PROJECT_ID, BIGQUERY_DATASET_ID, BIGQUERY_TABLE_FINANCIAL_METRICS, BIGQUERY_TABLE_NUMERICAL_INSIGHTS, BIGQUERY_TABLE_SENTIMENT_SCORES, BIGQUERY_TABLE_REPORT_METADATA
-
+from datetime import datetime, timezone
 
 class BigQueryTool:
     """
