@@ -55,4 +55,5 @@ TEXT_EMBEDDING_MODEL_NAME = "text-embedding-004" # For vector embeddings
 # Secret Manager Secrets (names of secrets you'll store in Secret Manager)
 SECRET_ALPHA_VANTAGE_API_KEY = "alpha-vantage-api-key"
 
-PUBSUB_TOPIC_REPORT_GENERATION_REQUEST = "report-generation-requests-topic" # Added 's'
+# PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS = "report-generation-requests-topic"
+PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS = "report-generation-requests-topic"

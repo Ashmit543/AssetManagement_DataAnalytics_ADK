@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from common.adk_base import ADKBaseAgent
 from common.utils import get_current_ist_timestamp
 from common.constants import (
-    PUBSUB_TOPIC_REPORT_GENERATION_REQUEST,
+    PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS,
     PUBSUB_TOPIC_REPORT_GENERATION_COMPLETED,
     PUBSUB_TOPIC_DASHBOARD_UPDATES,
     REGION, # Use REGION here, as defined in common/constants.py

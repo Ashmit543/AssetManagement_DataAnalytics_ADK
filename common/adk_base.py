@@ -2,110 +2,97 @@
 
 import json
 import os
-import base64 # <-- ADD THIS IMPORT
+import base64 # Make sure this line is present and NOT commented out
 from flask import Flask, request, jsonify
 from google.cloud import pubsub_v1
-from common.constants import PROJECT_ID, PUBSUB_TOPIC_DASHBOARD_UPDATES, REGION
+from common.constants import PROJECT_ID, PUBSUB_TOPIC_DASHBOARD_UPDATES, REGION # REGION might not be needed here if not directly used, but harmless for now
 
 class ADKBaseAgent:
     """
-    A base class for ADK agents to handle common functionalities like
-    Pub/Sub message processing and response publishing.
-    This acts as a Flask app to receive Pub/Sub push messages.
+    Base class for all Agents in the Asset Data Kit.
+    Handles Flask app setup, Pub/Sub message reception, and message publishing.
     """
     def __init__(self, agent_name: str):
         self.agent_name = agent_name
         self.app = Flask(agent_name)
         self.publisher = pubsub_v1.PublisherClient()
+        self.project_id = PROJECT_ID
 
-        # Define the route for Pub/Sub push messages
+        # Register the Pub/Sub push endpoint
         @self.app.route('/', methods=['POST'])
         def index():
             return self.handle_pubsub_message(request)
 
-        # You might add other common routes here for health checks, etc.
-        @self.app.route('/health', methods=['GET'])
-        def health_check():
-            return "OK", 200
+        print(f"{self.agent_name} initialized.")
 
     def handle_pubsub_message(self, request):
         """
-        Processes incoming Pub/Sub push messages.
+        Receives and processes Pub/Sub push messages.
         """
-        try: # Added a try-except around the entire handling for robustness
-            envelope = request.get_json()
-            if not envelope:
-                print("No JSON payload received from request.")
-                return jsonify({"status": "error", "message": "No JSON payload received"}), 400
+        if request.method != 'POST':
+            return 'OK', 200 # Acknowledge non-POST requests
 
-            if not isinstance(envelope, dict) or "message" not in envelope:
-                print(f"Invalid Pub/Sub message format: {envelope}")
-                return jsonify({"status": "error", "message": "Invalid Pub/Sub message format"}), 400
+        # Ensure the request body is valid JSON
+        if not request.is_json:
+            print(f"{self.agent_name}: Invalid request, must be JSON.")
+            return 'Bad Request: not JSON', 400
 
-            pubsub_message = envelope["message"]
+        envelope = request.get_json()
+        if not envelope:
+            print(f"{self.agent_name}: Invalid Pub/Sub message format (missing envelope).")
+            return 'Bad Request: missing envelope', 400
 
-            # Decode the Pub/Sub message data
-            if "data" in pubsub_message:
-                message_data_base64_string = pubsub_message["data"] # This is the base64 string
+        if not isinstance(envelope, dict) or 'message' not in envelope:
+            print(f"{self.agent_name}: Invalid Pub/Sub message format (missing 'message' key).")
+            return 'Bad Request: malformed message', 400
 
-                # --- CRITICAL FIX START ---
-                # First, base64 decode the string into bytes
-                message_data_bytes = base64.b64decode(message_data_base64_string)
-                # Then, decode the bytes into a UTF-8 string, and load as JSON
-                message_data = json.loads(message_data_bytes.decode('utf-8'))
-                # --- CRITICAL FIX END ---
+        message = envelope.get('message')
+        if not isinstance(message, dict) or 'data' not in message:
+            print(f"{self.agent_name}: Invalid Pub/Sub message format (missing 'data' in message).")
+            return 'Bad Request: missing data', 400
 
-            else:
-                # If 'data' field is not present, assume empty message data
-                message_data = {}
-                print(f"ADKBaseAgent: No 'data' field found in Pub/Sub message. Processing with empty data.")
-
-
+        try:
+            # Pub/Sub message data is base64 encoded
+            decoded_data = base64.b64decode(message['data']).decode('utf-8')
+            message_data = json.loads(decoded_data)
             print(f"[{self.agent_name}] Received message: {message_data}")
 
-            # Now, call the agent's specific process_message method
+            # Process the message
             self.process_message(message_data)
 
-            return jsonify({"status": "success", "message": "Message processed"}), 200
-        except json.JSONDecodeError as e:
-            print(f"Error decoding message data for agent {self.agent_name}: {e}. Raw data (if available): {message_data_base64_string[:200] if 'message_data_base64_string' in locals() else 'N/A'}")
-            return jsonify({"status": "error", "message": f"Invalid JSON in Pub/Sub message data: {e}"}), 400
+            return 'OK', 200
         except Exception as e:
-            print(f"Error in ADKBaseAgent.handle_pubsub_message for agent {self.agent_name}: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 400 # Return 400 for client errors, 500 for server issues.
+            print(f"[{self.agent_name}] Error processing message: {e}")
+            return 'Internal Server Error', 500
 
     def process_message(self, message_data: dict):
         """
-        Abstract method to be implemented by child classes.
-        This is where the specific agent logic goes.
+        Abstract method to be implemented by subclass for specific message processing.
         """
-        raise NotImplementedError("process_message must be implemented by subclasses.")
+        raise NotImplementedError("Subclasses must implement process_message method.")
 
-    def publish_message(self, topic_id: str, message_data: dict):
+    def publish_message(self, topic_id: str, data: dict):
         """
-        Publishes a message to a given Pub/Sub topic.
+        Publishes a message to a specified Pub/Sub topic.
         """
-        topic_path = self.publisher.topic_path(PROJECT_ID, topic_id)
-        message_json = json.dumps(message_data)
-        message_bytes = message_json.encode("utf-8")
+        topic_path = self.publisher.topic_path(self.project_id, topic_id)
+        data_bytes = json.dumps(data).encode('utf-8')
 
         try:
-            future = self.publisher.publish(topic_path, message_bytes)
+            future = self.publisher.publish(topic_path, data_bytes)
             message_id = future.result()
             print(f"[{self.agent_name}] Published message to {topic_id} with ID: {message_id}")
             return message_id
         except Exception as e:
             print(f"[{self.agent_name}] Failed to publish message to {topic_id}: {e}")
-            raise # Re-raise the exception to be caught by the calling function
+            # Consider adding more robust error handling / retry logic here
+            raise e
 
     def publish_dashboard_update(self, update_data: dict):
         """
-        A helper to publish updates to the dashboard topic.
+        Publishes an update message to the dashboard-updates-topic.
         """
-        self.publish_message(PUBSUB_TOPIC_DASHBOARD_UPDATES, update_data)
-
-    def run(self, host='0.0.0.0', port=os.environ.get('PORT', 8080)):
-        """
-        Runs the Flask application.
-        """
-        self.app.run(host=host, port=port)
+        try:
+            self.publish_message(PUBSUB_TOPIC_DASHBOARD_UPDATES, update_data)
+        except Exception as e:
+            print(f"[{self.agent_name}] Failed to publish dashboard update: {e}")
