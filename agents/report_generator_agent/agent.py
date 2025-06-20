@@ -1,208 +1,140 @@
 # agents/report_generator_agent/agent.py
 
 import json
-import uuid
-from datetime import datetime, timezone, timedelta
-from google.cloud import storage  # For GCS operations
-
+import os
+import time
+import base64
+from datetime import datetime, timezone
 from common.adk_base import ADKBaseAgent
-from tools.bigquery_tool import BigQueryTool
-from tools.gemini_tool import GeminiTool
+from common.utils import get_current_ist_timestamp
 from common.constants import (
-    PROJECT_ID,
-    GEMINI_MODEL_NAME,
-    BIGQUERY_TABLE_FINANCIAL_METRICS,
-    BIGQUERY_TABLE_NUMERICAL_INSIGHTS,  # NEW: Import numerical insights table constant
-    BIGQUERY_TABLE_REPORT_METADATA,
+    PUBSUB_TOPIC_REPORT_GENERATION_REQUEST,
     PUBSUB_TOPIC_REPORT_GENERATION_COMPLETED,
     PUBSUB_TOPIC_DASHBOARD_UPDATES,
-    GCS_REPORTS_BUCKET,
-    BIGQUERY_DATASET_ID,
+    REGION, # Use REGION here, as defined in common/constants.py
+    PROJECT_ID
 )
-from agents.report_generator_agent.report_templates import get_report_template
-from common.utils import get_current_ist_timestamp
+from tools.gemini_tool import GeminiTool   # Assuming this path is correct
+from flask import request  # Import request for test context
 
 
 class ReportGeneratorAgent(ADKBaseAgent):
     """
-    The Report Generator Agent fetches relevant data, uses Gemini to generate
-    investment reports based on templates, stores them in GCS, and logs metadata in BigQuery.
+    The Report Generator Agent listens for requests to generate reports,
+    uses Gemini to create the report content, and publishes the completed report.
     """
 
     def __init__(self):
         super().__init__("ReportGeneratorAgent")
-        self.project_id = PROJECT_ID
-        self.bigquery_dataset_id = BIGQUERY_DATASET_ID
-
-        self.bigquery_tool = BigQueryTool()
-        self.gemini_tool = GeminiTool()
-        self.gcs_client = storage.Client(project=PROJECT_ID)
-        self.reports_bucket = self.gcs_client.bucket(GCS_REPORTS_BUCKET)
         print("ReportGeneratorAgent initialized.")
+        # Use REGION from common.constants.py as the location for GeminiTool
+        self.gemini_tool = GeminiTool() # Call without arguments
 
     def process_message(self, message_data: dict):
         """
-        Processes a request to generate a report.
+        Processes a report generation request.
         Expected `message_data` format:
         {
             "report_type": "Executive Summary",
-            "company_ticker": "IBM", # Optional
-            "request_id": "unique-id-123"
-            "parameters": {"start_date": "2024-01-01", "end_date": "2024-06-30"} # Optional, for custom reports
-            "report_date": "2025-06-19" # NEW: Date for which report should be generated (defaults to today)
+            "company_ticker": "IBM",
+            "request_id": "unique-request-id-123",
+            "report_date": "2025-06-19" # Date for which report is requested
         }
         """
         report_type = message_data.get("report_type")
         company_ticker = message_data.get("company_ticker")
         request_id = message_data.get("request_id")
-        parameters = message_data.get("parameters", {})
+        report_date = message_data.get("report_date")
 
-        # NEW: Determine the report generation date
-        report_date_str = message_data.get("report_date")
-        if not report_date_str:
-            report_date_obj = datetime.now(timezone.utc).date()
-            report_date_str = report_date_obj.strftime("%Y-%m-%d")
-        else:
-            report_date_obj = datetime.strptime(report_date_str, "%Y-%m-%d").date()
-
-        report_id = str(uuid.uuid4())
-        generation_timestamp = get_current_ist_timestamp()  # Use IST timestamp
+        if not report_type or not company_ticker or not request_id or not report_date:
+            error_msg = f"ReportGeneratorAgent: Missing essential data in request (report_type, company_ticker, request_id, report_date). Received: {message_data}"
+            print(error_msg)
+            self.publish_dashboard_update({
+                "request_id": request_id,
+                "status": "FAILED",
+                "agent": self.agent_name,
+                "message": error_msg
+            })
+            return
 
         print(
-            f"ReportGeneratorAgent: Starting generation of '{report_type}' report (ID: {report_id}) for {company_ticker or 'N/A'} on {report_date_str}.")
+            f"ReportGeneratorAgent: Starting generation of '{report_type}' report for {company_ticker} on {report_date} (Request ID: {request_id}).")
 
-        report_metadata = {
-            "report_id": report_id,
-            "report_type": report_type,
-            "company_ticker": company_ticker,
-            "generation_timestamp": generation_timestamp,
-            "gcs_uri": "",
-            "llm_model_used": GEMINI_MODEL_NAME,
-            "parameters_used": json.dumps(parameters),
-            "status": "IN_PROGRESS",
-            "embedding_id": None,
-            "ingestion_timestamp": get_current_ist_timestamp()
-        }
-        self.bigquery_tool.insert_rows(BIGQUERY_TABLE_REPORT_METADATA, [report_metadata])
         self.publish_dashboard_update({
             "request_id": request_id,
             "status": "IN_PROGRESS",
             "agent": self.agent_name,
-            "message": f"Generating '{report_type}' report for {company_ticker or 'N/A'} (ID: {report_id})."
+            "message": f"Generating '{report_type}' report for {company_ticker}."
         })
 
         try:
-            # 2. Fetch data from BigQuery
-            financial_data_for_llm = ""
-            numerical_insights_for_llm = ""
+            # For demonstration, let's assume we have some dummy financial data or fetched it.
+            # In a real scenario, this would come from NumericalSummarizer or FinancialMetrics agents.
+            dummy_financial_data = {
+                "ticker": company_ticker,
+                "date": report_date,
+                "revenue": "50B",
+                "profit": "10B",
+                "growth_rate": "15%",
+                "market_sentiment": "positive",
+                "key_insights": "Strong quarter with robust growth in cloud services.",
+                "analyst_consensus": "Buy"
+            }
 
-            if company_ticker:
-                # Fetch latest financial metrics (as before)
-                financial_query = f"""
-                    SELECT * FROM `{self.project_id}.{self.bigquery_dataset_id}.{BIGQUERY_TABLE_FINANCIAL_METRICS}`
-                    WHERE ticker = '{company_ticker}'
-                    ORDER BY date DESC, ingestion_timestamp DESC
-                    LIMIT 1
-                """
-                financial_data_rows = self.bigquery_tool.query_data(financial_query)
+            # Construct the prompt for Gemini
+            prompt = f"""
+            Generate an "Executive Summary" report for {company_ticker} based on the following financial data and insights for the date {report_date}:
 
-                if financial_data_rows and financial_data_rows[0]:
-                    latest_data = financial_data_rows[0]
-                    financial_data_for_llm += f"Latest Financial Metrics for {company_ticker} ({latest_data.get('date')}):\n"
-                    financial_data_for_llm += f"- Current Price: {latest_data.get('current_price')}\n"
-                    financial_data_for_llm += f"- Day Change: {latest_data.get('day_change_percent'):.2f}%\n"
-                    financial_data_for_llm += f"- Market Cap: {latest_data.get('market_cap'):,.0f}\n"
-                    financial_data_for_llm += f"- PE Ratio: {latest_data.get('pe_ratio')}\n"
-                else:
-                    financial_data_for_llm = f"No recent financial data found for {company_ticker}."
+            Financial Data:
+            - Revenue: {dummy_financial_data['revenue']}
+            - Profit: {dummy_financial_data['profit']}
+            - Growth Rate: {dummy_financial_data['growth_rate']}
+            - Market Sentiment: {dummy_financial_data['market_sentiment']}
+            - Key Insights: {dummy_financial_data['key_insights']}
+            - Analyst Consensus: {dummy_financial_data['analyst_consensus']}
 
-                # NEW: Fetch numerical insights
-                # Fetch insights generated on or around the report_date, looking back a few days
-                insights_start_date_obj = report_date_obj - timedelta(days=7)  # Look back 7 days for insights
-                insights_start_date_str = insights_start_date_obj.strftime("%Y-%m-%d")
+            The report should be concise, professional, and highlight key performance indicators and future outlook.
+            Format the output as a JSON object with the following structure:
+            {{
+                "report_title": "Executive Summary for {company_ticker}",
+                "summary": "...",
+                "key_highlights": [ "...", "..." ],
+                "future_outlook": "...",
+                "disclaimer": "This report is for informational purposes only and should not be considered financial advice."
+            }}
+            """
 
-                numerical_insights_query = f"""
-                    SELECT insight_type, summary_text, generation_date
-                    FROM `{self.project_id}.{self.bigquery_dataset_id}.{BIGQUERY_TABLE_NUMERICAL_INSIGHTS}`
-                    WHERE ticker = '{company_ticker}'
-                    AND generation_date BETWEEN '{insights_start_date_str}' AND '{report_date_str}'
-                    ORDER BY generation_date DESC, ingestion_timestamp DESC
-                    LIMIT 5 -- Fetch up to 5 latest insights
-                """
-                numerical_insights_rows = self.bigquery_tool.query_data(numerical_insights_query)
+            print(f"ReportGeneratorAgent: Sending prompt to Gemini for {company_ticker}...")
+            gemini_response = self.gemini_tool.send_prompt(prompt, response_format="json")
+            print(f"ReportGeneratorAgent: Received response from Gemini.")
 
-                if numerical_insights_rows:
-                    numerical_insights_for_llm += f"\nRecent Numerical Insights for {company_ticker}:\n"
-                    for insight in numerical_insights_rows:
-                        numerical_insights_for_llm += (
-                            f"- Type: {insight.get('insight_type')}, Date: {insight.get('generation_date')}\n"
-                            f"  Summary: {insight.get('summary_text')}\n"
-                        )
-                else:
-                    numerical_insights_for_llm = f"\nNo recent numerical insights found for {company_ticker}."
+            # Parse the Gemini response (it should already be a dict if response_format="json" worked)
+            generated_report_content = gemini_response  # Assuming GeminiTool already returns parsed JSON/dict
 
-            else:  # No company_ticker specified for report
-                financial_data_for_llm = "No specific company financial data requested for this report."
-                numerical_insights_for_llm = "No specific company numerical insights requested for this report."
-
-            # 3. Get the appropriate report template
-            prompt_template = get_report_template(report_type)
-            if not prompt_template:
-                raise ValueError(f"No template found for report type: {report_type}")
-
-            # 4. Generate report content using Gemini
-            full_prompt = prompt_template.format(
-                ticker=company_ticker or "the entity",
-                report_date=report_date_str,  # NEW: Pass report date to template
-                financial_data=financial_data_for_llm,
-                numerical_insights=numerical_insights_for_llm,  # NEW: Pass numerical insights
-                user_parameters=json.dumps(parameters)
-            )
-
-            print(f"ReportGeneratorAgent: Sending prompt to Gemini for {report_id}...")
-            generated_report_content = self.gemini_tool.generate_text(full_prompt, temperature=0.7, max_tokens=2048)
-
-            if not generated_report_content:
-                raise Exception("Gemini failed to generate report content.")
-
-            print(f"ReportGeneratorAgent: Report content generated for {report_id}.")
-
-            # 5. Save report to GCS
-            gcs_object_name = f"reports/{report_id}.txt"
-            blob = self.reports_bucket.blob(gcs_object_name)
-            blob.upload_from_string(generated_report_content, content_type="text/plain")
-            gcs_uri = f"gs://{GCS_REPORTS_BUCKET}/{gcs_object_name}"
-            print(f"ReportGeneratorAgent: Report saved to GCS: {gcs_uri}")
-
-            # 6. Update report metadata in BigQuery
-            report_metadata["gcs_uri"] = gcs_uri
-            report_metadata["status"] = "COMPLETED"
-            self.bigquery_tool.insert_rows(BIGQUERY_TABLE_REPORT_METADATA, [report_metadata])
-            print(f"ReportGeneratorAgent: Report metadata updated for {report_id}.")
-
-            # 7. Publish completion message
-            self.publish_message(PUBSUB_TOPIC_REPORT_GENERATION_COMPLETED, {
-                "report_id": report_id,
+            # Construct the final message for publication
+            completed_report_message = {
+                "request_id": request_id,
+                "ticker": company_ticker,
                 "report_type": report_type,
-                "company_ticker": company_ticker,
-                "gcs_uri": gcs_uri,
-                "request_id": request_id
-            })
+                "report_date": report_date,
+                "generated_at": get_current_ist_timestamp(),
+                "report_content": generated_report_content
+            }
+
+            self.publish_message(PUBSUB_TOPIC_REPORT_GENERATION_COMPLETED, completed_report_message)
+            print(
+                f"ReportGeneratorAgent: Published completed '{report_type}' report for {company_ticker} (ID: {request_id}).")
+
             self.publish_dashboard_update({
                 "request_id": request_id,
                 "status": "COMPLETED",
                 "agent": self.agent_name,
-                "message": f"'{report_type}' report for {company_ticker or 'N/A'} generated and available at {gcs_uri}.",
-                "report_id": report_id,
-                "gcs_uri": gcs_uri
+                "message": f"'{report_type}' report generated for {company_ticker}."
             })
-            print(f"ReportGeneratorAgent: Report generation completed for {report_id}.")
 
         except Exception as e:
-            error_msg = f"ReportGeneratorAgent: Error generating '{report_type}' report for {company_ticker or 'N/A'} (ID: {report_id}): {e}"
+            error_msg = f"ReportGeneratorAgent: Error generating report for {company_ticker} (Request ID: {request_id}): {e}"
             print(error_msg)
-            report_metadata["status"] = "FAILED"
-            self.bigquery_tool.insert_rows(BIGQUERY_TABLE_REPORT_METADATA, [report_metadata])
             self.publish_dashboard_update({
                 "request_id": request_id,
                 "status": "FAILED",
@@ -211,81 +143,52 @@ class ReportGeneratorAgent(ADKBaseAgent):
             })
 
 
-# Entry point for the Cloud Run service
+# Entry point for the Cloud Run service.
+# This is the standard way to expose the Flask app for deployment.
 app = ReportGeneratorAgent().app
 
 # --- Test Block for direct execution ---
 if __name__ == "__main__":
     print("\n--- Running ReportGeneratorAgent direct test ---")
 
-    agent_instance = ReportGeneratorAgent()
+    # We create an instance just for the test block
+    test_agent_instance = ReportGeneratorAgent()
 
-    # --- Ensure `report_templates.py` exists in the same directory ---
-    # Create a dummy report_templates.py if you haven't already, e.g.:
-    # # agents/report_generator_agent/report_templates.py
-    # def get_report_template(report_type: str) -> str:
-    #     if report_type == "Executive Summary":
-    #         return """
-    #         Generate an Executive Summary for {ticker} for the report date {report_date}.
-    #         Include the following latest financial metrics:
-    #         {financial_data}
-    #         Also, consider these recent numerical insights:
-    #         {numerical_insights}
-    #         Highlight key performance and trends based on the provided data.
-    #         """
-    #     elif report_type == "Market Overview":
-    #         return """
-    #         Generate a Market Overview report for {report_date} with focus on {user_parameters}.
-    #         """
-    #     return None
-
-    # Use today's date for current test, or a date for which you have recent TESTDATA and TEST.NS insights
+    test_ticker_for_report = "GOOGL"
     test_report_date = datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
 
-    # --- Test 1: Generate an Executive Summary for TESTDATA ---
-    # This assumes 'TESTDATA' has recent financial metrics AND numerical insights in BQ.
-    test_message_executive = {
+    # Simulate a message from CoordinatorAgent or other source
+    # This message needs to be wrapped in the Pub/Sub push message format
+    # The 'data' field must be base64 encoded.
+    simulated_report_request_payload = {
         "report_type": "Executive Summary",
-        "company_ticker": "TESTDATA",
-        "request_id": "rpt-req-exec-1",
-        "report_date": test_report_date  # Pass the date explicitly
-    }
-    print(
-        f"\nSimulating request for '{test_message_executive['report_type']}' report for {test_message_executive['company_ticker']} on {test_report_date}...")
-    agent_instance.process_message(test_message_executive)
-
-    # --- Test 2: Generate an Executive Summary for TEST.NS ---
-    # This assumes 'TEST.NS' also has recent data. Note: TEST.NS only had 1 day of data in previous tests,
-    # so its summary from Gemini might still be very basic.
-    test_message_executive_ns = {
-        "report_type": "Executive Summary",
-        "company_ticker": "TEST.NS",
-        "request_id": "rpt-req-exec-ns-1",
-        "report_date": test_report_date  # Pass the date explicitly
-    }
-    print(
-        f"\nSimulating request for '{test_message_executive_ns['report_type']}' report for {test_message_executive_ns['company_ticker']} on {test_report_date}...")
-    agent_instance.process_message(test_message_executive_ns)
-
-    # --- Test 3: Generate a generic market overview report (no specific ticker) ---
-    test_message_market = {
-        "report_type": "Market Overview",
-        "request_id": "rpt-req-market-2",
-        "parameters": {"market_focus": "Indian Equities", "time_frame": "Q2 2025"},
+        "company_ticker": test_ticker_for_report,
+        "request_id": "report-test-req-1",
         "report_date": test_report_date
     }
-    print(f"\nSimulating request for '{test_message_market['report_type']}' report...")
-    agent_instance.process_message(test_message_market)
 
-    # --- Test 4: Generate a report for a non-existent ticker ---
-    test_message_no_data = {
-        "report_type": "Executive Summary",
-        "company_ticker": "NONEXISTENT",
-        "request_id": "rpt-req-no-data",
-        "report_date": test_report_date
+    # Encode the message data to base64
+    encoded_data = base64.b64encode(json.dumps(simulated_report_request_payload).encode("utf-8")).decode("utf-8")
+
+    # Construct the full Pub/Sub message format
+    simulated_pubsub_message = {
+        "message": {
+            "data": encoded_data,
+            "messageId": "test-report-message-id-456",
+            "publishTime": datetime.now(timezone.utc).isoformat(),
+            "attributes": {
+                "eventType": "report_generation_request"
+            }
+        },
+        "subscription": "projects/your-project-id/subscriptions/test-report-subscription"  # Placeholder
     }
+
     print(
-        f"\nSimulating request for '{test_message_no_data['report_type']}' report for {test_message_no_data['company_ticker']} (expecting no data)...")
-    agent_instance.process_message(test_message_no_data)
+        f"\nSimulating Pub/Sub message for report generation request for {test_ticker_for_report} on {test_report_date}...")
+
+    # Use app.test_request_context to simulate an incoming HTTP POST request
+    with app.test_request_context(method='POST', json=simulated_pubsub_message):
+        # Now, `request.get_json()` will work correctly inside handle_pubsub_message
+        test_agent_instance.handle_pubsub_message(request)  # Pass the Flask request object
 
     print("\n--- ReportGeneratorAgent direct test completed ---")

@@ -1,5 +1,8 @@
+# common/adk_base.py
+
 import json
 import os
+import base64 # <-- ADD THIS IMPORT
 from flask import Flask, request, jsonify
 from google.cloud import pubsub_v1
 from common.constants import PROJECT_ID, PUBSUB_TOPIC_DASHBOARD_UPDATES, REGION
@@ -29,36 +32,47 @@ class ADKBaseAgent:
         """
         Processes incoming Pub/Sub push messages.
         """
-        envelope = request.get_json()
-        if not envelope:
-            print("No Pub/Sub message received.")
-            return jsonify({"status": "error", "message": "No Pub/Sub message received"}), 400
+        try: # Added a try-except around the entire handling for robustness
+            envelope = request.get_json()
+            if not envelope:
+                print("No JSON payload received from request.")
+                return jsonify({"status": "error", "message": "No JSON payload received"}), 400
 
-        if not isinstance(envelope, dict) or "message" not in envelope:
-            print(f"Invalid Pub/Sub message format: {envelope}")
-            return jsonify({"status": "error", "message": "Invalid Pub/Sub message format"}), 400
+            if not isinstance(envelope, dict) or "message" not in envelope:
+                print(f"Invalid Pub/Sub message format: {envelope}")
+                return jsonify({"status": "error", "message": "Invalid Pub/Sub message format"}), 400
 
-        pubsub_message = envelope["message"]
+            pubsub_message = envelope["message"]
 
-        # Decode the Pub/Sub message data
-        if "data" in pubsub_message:
-            message_data_bytes = pubsub_message["data"]
-            try:
+            # Decode the Pub/Sub message data
+            if "data" in pubsub_message:
+                message_data_base64_string = pubsub_message["data"] # This is the base64 string
+
+                # --- CRITICAL FIX START ---
+                # First, base64 decode the string into bytes
+                message_data_bytes = base64.b64decode(message_data_base64_string)
+                # Then, decode the bytes into a UTF-8 string, and load as JSON
                 message_data = json.loads(message_data_bytes.decode('utf-8'))
-            except json.JSONDecodeError as e:
-                print(f"Error decoding message data: {e}. Raw data: {message_data_bytes.decode('utf-8')}")
-                return jsonify({"status": "error", "message": f"Invalid JSON in message data: {e}"}), 400
-        else:
-            message_data = {}
+                # --- CRITICAL FIX END ---
 
-        print(f"[{self.agent_name}] Received message: {message_data}")
+            else:
+                # If 'data' field is not present, assume empty message data
+                message_data = {}
+                print(f"ADKBaseAgent: No 'data' field found in Pub/Sub message. Processing with empty data.")
 
-        try:
+
+            print(f"[{self.agent_name}] Received message: {message_data}")
+
+            # Now, call the agent's specific process_message method
             self.process_message(message_data)
+
             return jsonify({"status": "success", "message": "Message processed"}), 200
+        except json.JSONDecodeError as e:
+            print(f"Error decoding message data for agent {self.agent_name}: {e}. Raw data (if available): {message_data_base64_string[:200] if 'message_data_base64_string' in locals() else 'N/A'}")
+            return jsonify({"status": "error", "message": f"Invalid JSON in Pub/Sub message data: {e}"}), 400
         except Exception as e:
-            print(f"[{self.agent_name}] Error processing message: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
+            print(f"Error in ADKBaseAgent.handle_pubsub_message for agent {self.agent_name}: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 400 # Return 400 for client errors, 500 for server issues.
 
     def process_message(self, message_data: dict):
         """
@@ -82,7 +96,7 @@ class ADKBaseAgent:
             return message_id
         except Exception as e:
             print(f"[{self.agent_name}] Failed to publish message to {topic_id}: {e}")
-            raise
+            raise # Re-raise the exception to be caught by the calling function
 
     def publish_dashboard_update(self, update_data: dict):
         """

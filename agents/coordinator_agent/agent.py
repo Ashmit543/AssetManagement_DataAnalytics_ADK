@@ -1,112 +1,122 @@
+# agents/coordinator_agent/agent.py
+
 import json
+import base64
+from datetime import datetime, timezone
 from common.adk_base import ADKBaseAgent
 from common.constants import (
-    PUBSUB_TOPIC_FINANCIAL_DATA_REQUESTS,
-    PUBSUB_TOPIC_NUMERICAL_SUMMARIES_REQUESTS,
-    PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS,
-    PUBSUB_TOPIC_DASHBOARD_UPDATES
+    # Make sure these constants are defined in common/constants.py
+    PUBSUB_TOPIC_FINANCIAL_METRICS_PROCESSED,
+    PUBSUB_TOPIC_NUMERICAL_INSIGHTS_PROCESSED,
+    PUBSUB_TOPIC_REPORT_GENERATION_REQUEST,
+    PUBSUB_TOPIC_DASHBOARD_UPDATES,
 )
-from flask import jsonify # Ensure jsonify is imported if used in index or handle_pubsub_message
+from common.utils import get_current_ist_timestamp
+from flask import request  # Import request from flask for test context
+
 
 class CoordinatorAgent(ADKBaseAgent):
     """
-    The Coordinator Agent orchestrates requests, routing them to appropriate
-    downstream agents based on the received message content.
-    It primarily listens for requests from the Dashboard Agent or direct triggers.
+    The Coordinator Agent orchestrates the workflow of generating reports.
+    It listens for numerical insights and triggers the report generation process.
     """
+
     def __init__(self):
         super().__init__("CoordinatorAgent")
         print("CoordinatorAgent initialized.")
 
     def process_message(self, message_data: dict):
         """
-        Processes an incoming message, determines the target agent, and routes the request.
+        Processes messages from numerical-insights-processed-topic.
         Expected `message_data` format:
         {
-            "request_type": "financial_metrics" | "numerical_summary" | "generate_report",
-            "payload": { ... } # specific data for the request
+            "ticker": "IBM",
+            "date": "2025-06-19",
+            "insights_count": 2,
+            "request_id": "num-summ-req-1" # The request ID from the original trigger
         }
         """
-        request_type = message_data.get("request_type")
-        payload = message_data.get("payload", {})
-        request_id = message_data.get("request_id") # Unique ID to track requests
+        ticker = message_data.get("ticker")
+        data_date = message_data.get("date")
+        request_id = message_data.get("request_id")
 
-        print(f"Coordinator: Received request_type: {request_type} with payload: {payload}")
-
-        if not request_type:
-            print("Coordinator: Missing 'request_type' in message. Cannot route.")
-            self.publish_dashboard_update({
-                "request_id": request_id,
-                "status": "FAILED",
-                "message": "Missing request_type in coordinator request."
-            })
+        if not ticker or not data_date:
+            print("CoordinatorAgent: Missing 'ticker' or 'date' in numerical insights processed message. Skipping.")
             return
 
-        response_topic = None # Future: Can use reply-to topic for direct response
+        print(f"CoordinatorAgent: Received numerical insights processed for {ticker} on {data_date}.")
 
-        try:
-            if request_type == "financial_metrics":
-                if not payload.get("ticker"):
-                    raise ValueError("Financial metrics request requires 'ticker'.")
-                self.publish_message(PUBSUB_TOPIC_FINANCIAL_DATA_REQUESTS, payload)
-                print(f"Coordinator: Routed financial metrics request for {payload.get('ticker')} to Financial Metrics Agent.")
-                self.publish_dashboard_update({
-                    "request_id": request_id,
-                    "status": "ROUTED",
-                    "agent": "FinancialMetricsAgent",
-                    "message": f"Request for financial metrics for {payload.get('ticker')} routed."
-                })
+        self.publish_dashboard_update({
+            "request_id": request_id,
+            "status": "INFO",
+            "agent": self.agent_name,
+            "message": f"Numerical insights ready for {ticker}. Triggering report generation."
+        })
 
-            elif request_type == "numerical_summary":
-                if not payload.get("ticker") and not payload.get("insight_type"):
-                    raise ValueError("Numerical summary request requires 'ticker' or 'insight_type'.")
-                self.publish_message(PUBSUB_TOPIC_NUMERICAL_SUMMARIES_REQUESTS, payload)
-                print(f"Coordinator: Routed numerical summary request for {payload.get('ticker')} to Numerical Summarizer Agent.")
-                self.publish_dashboard_update({
-                    "request_id": request_id,
-                    "status": "ROUTED",
-                    "agent": "NumericalSummarizerAgent",
-                    "message": f"Request for numerical summary for {payload.get('ticker')} routed."
-                })
+        # Trigger ReportGeneratorAgent
+        report_request_message = {
+            "report_type": "Executive Summary",
+            "company_ticker": ticker,
+            "request_id": request_id,
+            "report_date": data_date
+        }
 
-            elif request_type == "generate_report":
-                if not payload.get("report_type") or not (payload.get("ticker") or payload.get("sector")):
-                    raise ValueError("Report generation request requires 'report_type' and 'ticker' or 'sector'.")
-                self.publish_message(PUBSUB_TOPIC_REPORT_GENERATION_REQUESTS, payload)
-                print(f"Coordinator: Routed report generation request for {payload.get('report_type')} to Report Generator Agent.")
-                self.publish_dashboard_update({
-                    "request_id": request_id,
-                    "status": "ROUTED",
-                    "agent": "ReportGeneratorAgent",
-                    "message": f"Request for report '{payload.get('report_type')}' routed."
-                })
+        self.publish_message(PUBSUB_TOPIC_REPORT_GENERATION_REQUEST, report_request_message)
+        print(f"CoordinatorAgent: Triggered ReportGeneratorAgent for {ticker} report on {data_date}.")
 
-            else:
-                error_msg = f"Coordinator: Unknown request_type: {request_type}"
-                print(error_msg)
-                self.publish_dashboard_update({
-                    "request_id": request_id,
-                    "status": "FAILED",
-                    "message": error_msg
-                })
-
-        except ValueError as ve:
-            error_msg = f"Coordinator: Invalid request payload: {ve}"
-            print(error_msg)
-            self.publish_dashboard_update({
-                "request_id": request_id,
-                "status": "FAILED",
-                "message": error_msg
-            })
-        except Exception as e:
-            error_msg = f"Coordinator: An unexpected error occurred: {e}"
-            print(error_msg)
-            self.publish_dashboard_update({
-                "request_id": request_id,
-                "status": "FAILED",
-                "message": error_msg
-            })
+        self.publish_dashboard_update({
+            "request_id": request_id,
+            "status": "COMPLETED",
+            "agent": self.agent_name,
+            "message": f"Orchestration completed for {ticker}. Report generation initiated."
+        })
 
 
-# Entry point for the Cloud Run service
-app = CoordinatorAgent().app # Expose the Flask app instance
+# Entry point for the Cloud Run service.
+app = CoordinatorAgent().app
+
+# --- Test Block for direct execution ---
+if __name__ == "__main__":
+    print("\n--- Running CoordinatorAgent direct test ---")
+
+    # We create an instance just for the test block
+    test_agent_instance = CoordinatorAgent()
+
+    test_ticker_for_coord = "TESTDATA"
+    # Use current date for testing
+    current_date_ist = datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
+    test_data_date_for_coord = current_date_ist
+
+    simulated_numerical_insights_payload = {
+        "ticker": test_ticker_for_coord,
+        "date": test_data_date_for_coord,
+        "insights_count": 2,
+        "request_id": "coord-test-req-1"
+    }
+
+    # Encode the message data to base64
+    encoded_data = base64.b64encode(json.dumps(simulated_numerical_insights_payload).encode("utf-8")).decode("utf-8")
+
+    # Construct the full Pub/Sub message format (as it would be in the HTTP request body)
+    simulated_pubsub_message_body = {
+        "message": {
+            "data": encoded_data,
+            "messageId": "test-message-id-123",
+            "publishTime": datetime.now(timezone.utc).isoformat(),
+            "attributes": {
+                "eventType": "numerical_insights_processed"
+            }
+        },
+        # The subscription field is optional for local testing but good to include for realism
+        "subscription": "projects/your-project-id/subscriptions/test-subscription"
+    }
+
+    print(
+        f"\nSimulating Pub/Sub message for numerical insights processed for {test_ticker_for_coord} on {test_data_date_for_coord}...")
+
+    # Use app.test_request_context to simulate an incoming HTTP POST request
+    with app.test_request_context(method='POST', json=simulated_pubsub_message_body):
+        # Now, `request.get_json()` will work correctly inside handle_pubsub_message
+        test_agent_instance.handle_pubsub_message(request)  # Pass the Flask request object
+
+    print("\n--- CoordinatorAgent direct test completed ---")
