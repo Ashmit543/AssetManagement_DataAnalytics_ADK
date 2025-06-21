@@ -108,6 +108,14 @@ class ReportGeneratorAgent(ADKBaseAgent):
             gemini_response = self.gemini_tool.send_prompt(prompt, response_format="json")
             print(f"ReportGeneratorAgent: Received response from Gemini.")
 
+            # ADD THESE LINES TO PRINT THE REPORT CONTENT
+            if gemini_response:
+                print("\n--- GENERATED REPORT CONTENT START ---")
+                print(gemini_response)  # Or gemini_response.text if it's a model response object
+                print("--- GENERATED REPORT CONTENT END ---\n")
+            else:
+                print("Gemini response was empty or not handled.")
+
             # Parse the Gemini response (it should already be a dict if response_format="json" worked)
             generated_report_content = gemini_response  # Assuming GeminiTool already returns parsed JSON/dict
 
